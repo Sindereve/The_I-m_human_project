@@ -1,0 +1,3 @@
+*.zip
+captcha_images_v2/
+.venv/
