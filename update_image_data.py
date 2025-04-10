@@ -26,5 +26,5 @@ def clean_long_png_names(folder_path):
                     print(f"Ошибка при удалении {filename}: {e}")
 
 # Пример использования
-folder_to_clean = "captcha_images_v2/"  # Замените на реальный путь
+folder_to_clean = "captcha_images_v2/" 
 clean_long_png_names(folder_to_clean)
