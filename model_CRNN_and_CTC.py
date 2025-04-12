@@ -2,6 +2,7 @@ import pickle
 import json
 from pathlib import Path
 
+import re
 import base64
 
 import numpy as np
@@ -13,23 +14,66 @@ from keras import ops
 
 class CRNN_OCR_Predictor:
     """
-        ML модель
+        CRNN (Convolutional Recurrent Neural Network) модель для распознавания текста на капчах.
+
+        Архитектура модели:
+            1. CNN-блок (извлечение визуальных признаков)
+            2. RNN-блок (анализ последовательностей)
+            3. CTC-слой (Connectionist Temporal Classification) для декодирования
+
+        Основные возможности:
+            - Распознавание текста на изображениях с шумами
+            - Поддержка переменной длины текста
+            - Работа с одноканальными (grayscale) изображениями
+
+        Attributes:
+            model (tf.keras.Model): Загруженная CRNN модель
+            char_to_num (dict): Словарь маппинга символов → индексы
+            num_to_char (dict): Словарь маппинга индексы → символы
+            img_width (int): Ширина входного изображения
+            img_height (int): Высота входного изображения
+            max_length (int): Максимальная длина распознаваемого текста
+
+        Example:
+            >>> predictor = CRNN_OCR_Predictor("model_weights/")
+            >>> text = predictor.predict_captcha(img)
+            'A7B9K2'
     """
     
     def __init__(self, model_dir: str):
         """
-            Класс для предсказания капчи
-                :param model_dir: Путь к папке с моделью
+            Инициализирует распознаватель капчи с загрузкой CRNN модели и вспомогательных компонентов.
+            Args:
+                model_dir: Путь к директории с файлами модели. Должен содержать:
+                  - crnn_ocr_prediction.h5 - файл модели Keras
+                  - char_mappings.pkl - словари символов
+                  - config.json - параметры модели
         """
         self.model_dir = Path(model_dir)
         self._load_components()
     
     def _load_components(self):
         """
-            Загружает все необходимые компоненты модели
+            Загружает и инициализирует все компоненты модели для распознавания капчи.
+
+            Алгоритм загрузки:
+                1. Основной CRNN-модели в формате HDF5 (.h5)
+                2. Оптимизатора делегатов (XNNPACK для TFLite)
+                3. Словарей маппинга символов:
+
+                    - char_to_num: символ → числовой индекс
+                    - num_to_char: числовой индекс → символ
+                4. Конфигурационных параметров модели:
+
+                    - img_width: ширина входного изображения
+                    - img_height: высота входного изображения
+                    - max_length: максимальная длина распознаваемого текста
         """
         # Загрузка модели
         self.model = tf.keras.models.load_model(str(self.model_dir / 'crnn_ocr_prediction.h5'))
+
+        if hasattr(self.model, '_interpreter'):
+            self.model._interpreter._delegates = [tf.lite.experimental.load_delegate('XNNPACK')]
         
         # Загрузка словарей 
         with open(self.model_dir / 'char_mappings.pkl', 'rb') as f:
@@ -46,9 +90,26 @@ class CRNN_OCR_Predictor:
     
     def preprocess_image_from_path(self, image_path) -> tf.Tensor:
         """
-            Обработка изображения 
-                :param image_path: Путь к изображению (строка или Path объект)
-                :return: Обработанное изображение в нужном формате
+            Преобразует изображение капчи из файла в предобработанный тензор для модели CRNN.
+            
+            Алгоритм:
+                1. Чтение файла изображения
+                2. Декодирование PNG (с автоматическим приведением к grayscale)
+                3. Нормализация значений пикселей в диапазон [0, 1]
+                4. Проверка и коррекция размеров 
+                5. Транспонирование для CTC-алгоритма
+                6. Добавление batch-размерности
+
+            Args:
+                image_path: Путь к изображению (строка или Path-like объект).
+                        Поддерживаемые форматы: PNG (рекомендуется), JPEG.
+
+            Returns:
+                tf.Tensor: Тензор формы (1, width, height, 1), где:
+                        - 1: batch-размерность
+                        - width: self.img_width (после транспонирования)
+                        - height: self.img_height
+                        - 1: канал (grayscale)
         """
         img = tf.io.read_file(str(image_path))
         # Делаем чёрно-белое
@@ -79,18 +140,56 @@ class CRNN_OCR_Predictor:
         # Мы обучались на батчах поэхтому, мы маскируем батч
         img = tf.expand_dims(img, axis=0)
         return img
+
+    def _prepare_base64(self, base64_str: str) -> str:
+        """        
+            Обрабатывает и валидирует строку base64 перед декодированием.
+            Алгоритм:
+                1. Удаляем префикс, если есть
+                2. Проверяет корректность base64-данных (длина, алфавит)
+            Args:
+                base64_str: Исходная строка с данными в формате base64
+            Returns:
+                Очищенная и валидированная base64-строка, готовая к декодированию
+        """
+        # Удаляем префикс (если есть)
+        if "," in base64_str:
+            base64_str = base64_str.split(",")[-1]
+        
+        # Удаляем все не-base64 символы
+        cleaned = re.sub(r"[^a-zA-Z0-9+/]", "", base64_str)
+        
+        padding = len(cleaned) % 4
+        # Добавляем padding при необходимости
+        if padding == 1:
+            cleaned = cleaned[:-1]
+        elif padding > 1:
+            cleaned += "=" * (4 - padding)
+         
+        return cleaned
     
+
     def preprocess_image_from_base64(self, base64_str: str) -> tf.Tensor:
         """
-            Обработка изображения в формате base64
-                :param base64_str: Строка base64
-                :return: Обработанное изображение в нужном формате
+            Преобразует изображение из base64 в предобработанный тензор для нейросети.
+
+            Алгоритм:
+                1. Проверка str на правильность в base64
+                2. Конвертация цветового пространства в ЧБ 
+                3. Изменение размера под требования модели
+                4. Нормализация пикселей 
+                5. Транспонирование из-за использованного CTC слоя
+                6. Добавление batch-размерности 
+
+            Args:
+                base64_str: Строка в формате base64, с или без data-URI префикса
+                        (data:image/<format>;base64,)
+
+            Returns:
+                tf.Tensor: Тензор с формой (batch_size, height, width, channels) 
         """
 
-        # Удаляем префикс если он есть
-        if 'base64,' in base64_str:
-            base64_str = base64_str.split('base64,')[1]
-
+        base64_str = self._prepare_base64(base64_str)
 
         # Декодируем str -> base64 -> tf.Tensor
         bytes_data = base64.b64decode(base64_str)
@@ -121,13 +220,22 @@ class CRNN_OCR_Predictor:
         img = ops.transpose(img, axes=[1, 0, 2])
         # Мы обучались на батчах поэхтому, мы маскируем батч
         img = tf.expand_dims(img, axis=0)
-        return img
+        return img, base64_str
      
     def predict_captcha(self, img: tf.TensorSpec ) -> str:
         """
-            Предсказание капчи
-                :param batch: Принимает изображение вида [None, 250, 50, 1]
-                :return: Текст 
+            Распознает текст капчи из предобработанного тензора изображения.
+            
+            Args:
+                img: Входной тензор изображения, нормализованный в [0,1]. 
+                    Ожидаемая форма:
+                    - Для единичного изображения: [1, height, width, channels]
+                    - Для батча: [batch_size, height, width, channels]
+                    Поддерживаемые размеры: высота 50px, ширина 250px, 1 канал цвета
+
+            Returns:
+                str: Распознанный текст капчи (только буквы A-Z и цифры 0-9)
+                    Пустая строка означает ошибку распознавания
         """
         predict_float = self.model.predict(img)
         text = self._decode_batch_oneImg_predictions(predict_float)

@@ -2,3 +2,6 @@
 captcha_images_v2/
 .venv/
 test_imgs/
+test_false/
+test_true/
+__pycache__/
