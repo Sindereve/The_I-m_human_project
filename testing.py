@@ -12,11 +12,19 @@ import time
 from datetime import datetime
 from model_CRNN_and_CTC import CRNN_OCR_Predictor
 
-# задаём ожидание после предсказания капчи
+# Время работы программы в часах
+max_execution_time = 12
+# Время ожидания после предсказания капчи
 time_min = 1
+# Время ожидания после захода в сложные капчи
+time_stop_for_retry_limit = 3
+# Выбор обученной модели
+MODEL_DIR = 'models/0.5v'
+# Количество неверно решённых капч как флаг остановки
+retry_limit = 2 
 
 
-def save_captcha_image(base64_data: str, label: str, save_dir: str = "captcha_history") -> None:
+def save_captcha_image(base64_data: str, label: str, save_dir: str = "captcha_histor y") -> None:
     """
         Декодирует и сохраняет изображение капчи из base64 в указанную директорию.
         
@@ -45,6 +53,23 @@ def save_captcha_image(base64_data: str, label: str, save_dir: str = "captcha_hi
     
     except Exception as e:
         print(f"[{datetime.now()}] Ошибка сохранения капчи: {e}")
+
+def save_statistic(true_count: int, false_count: int):
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        filename = "statistic.txt"
+        filepath = os.path.join(script_dir, filename)
+
+        text = f'За {max_execution_time} часов работы\nКоличество верно решённых:{true_count}\nКоличество не верно решённых:{false_count}'
+        
+        # Декодируем и сохраняем
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(text)
+        
+        print(f"[{datetime.now()}] Статистика сохранена в {filepath}")
+    except Exception as e:
+        print(f"[{datetime.now()}] Ошибка сохранения статистики: {e}")
+
 
 def check_for_сaptcha(driver: webdriver) -> Optional[str]:
     """
@@ -148,8 +173,6 @@ def solve_captcha(driver: webdriver, predictor: CRNN_OCR_Predictor) -> Literal["
         return "no_captcha" # Капчи нету
         
 
-MODEL_DIR = 'models/0.5v'
-
 def main():
     # Настройка драйвера
     options = webdriver.ChromeOptions()
@@ -166,16 +189,35 @@ def main():
         # Количество не верно подряд решённых капч
         false_ultra = 0
 
+        # Переменные для ограничения работы по времени
+        start_time = time.time()
+        max_duration = max_execution_time * 60 * 60
+
         while True:
+
+            # Вычисление времени работы программы
+            current_time = time.time()
+            elapsed = current_time - start_time
+            if elapsed >= max_duration:
+                print("\n","="*20,sep='')
+                print(f"Программа закончила работу по истечению времени [{max_execution_time} - час(а/ов)]")
+                print(f"Статистика:")
+                print(f" - Верно решено: {count_true}")
+                print(f" - Не верно решено: {count_false}")
+                print("="*20)
+                save_statistic(count_true, count_false)
+                
+
             print(f"\n[{datetime.now()}] Начало новой проверки...")
-            driver.get("https://service2.diplo.de/rktermin/extern/appointment_showMonth.do?locationCode=niko&realmId=926&categoryId=1955&dateStr=12.04.2025")
+            driver.get("https://service2.diplo.de/rktermin/extern/appointment_showMonth.do?locationCode=niko&realmId=926&categoryId=1955&dateStr=14.07.2025")
             
             # Проверка на заход в сложные капчи
-            if false_ultra >= 5:
+            if false_ultra >= retry_limit:
                 print(' __Сложные капчи__ ')
-                print('...Ждём 5 минут...')
+                print(f'...Ждём {time_stop_for_retry_limit} минут...')
                 false_ultra = 0
-                time.sleep(300)
+                time.sleep(time_stop_for_retry_limit*60)
+                break
 
             # Ожидание загрузки страницы и обработка капчи
             captcha_result_predict = solve_captcha(driver, predictor)
@@ -193,10 +235,9 @@ def main():
                 except:
                     print(f"[{datetime.now()}] Нет доступных дат.")
 
-                # Пауза перед следующим запросом
                 count_true+=1
-                false_ultra = 0
-
+                false_ultra=0
+                # Пауза перед следующим запросом
                 print(f"[{datetime.now()}] Ожидание {time_min} минут...")
                 print(f"+{count_true} -{count_false}")
                 time.sleep(time_min*60)
@@ -209,12 +250,13 @@ def main():
                 # Пауза перед следующим запросом
                 print(f"[{datetime.now()}] Ожидание {time_min} минут...")
                 time.sleep(time_min*60)
-            
     except KeyboardInterrupt:
         print("\nСкрипт остановлен вручную.")
         print(f"Статистика:")
         print(f" - Верно решено: {count_true}")
         print(f" - Не верно решено: {count_false}")
+        save_statistic(count_true, count_false)
+        driver.quit()
     finally:
         driver.quit()
 
