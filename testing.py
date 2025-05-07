@@ -15,11 +15,11 @@ from model_CRNN_and_CTC import CRNN_OCR_Predictor
 # Время работы программы в часах
 max_execution_time = 12
 # Время ожидания после предсказания капчи
-time_min = 1
+time_min = 0.5
 # Время ожидания после захода в сложные капчи
 time_stop_for_retry_limit = 3
 # Выбор обученной модели
-MODEL_DIR = 'models/0.5v'
+MODEL_DIR = 'models/0.8v'
 # Количество неверно решённых капч как флаг остановки
 retry_limit = 2 
 
@@ -214,7 +214,7 @@ def main():
             # Проверка на заход в сложные капчи
             if false_ultra >= retry_limit:
                 print(' __Сложные капчи__ ')
-                print(f'...Ждём {time_stop_for_retry_limit} минут...')
+                print(f'...  {time_stop_for_retry_limit} минут...')
                 false_ultra = 0
                 time.sleep(time_stop_for_retry_limit*60)
                 break
