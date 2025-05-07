@@ -32,7 +32,8 @@ root/
 
 1. **Склонируйте репозиторий:**
 ```bash
-git clone https://github.com/your_username/your_repo.git
+git clone https://github.com/Sindereve/The_I-m_human_project.git
+https://github.com//edit/main/README.md
 cd your_repo
 ```
 2. **Склонируйте репозиторий:**
